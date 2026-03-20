@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PPT Auto Presenter</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+      .wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .card { background: #111827; border: 1px solid #334155; border-radius: 12px; padding: 16px; }
+      h1, h2 { margin-top: 0; }
+      input, select, button, textarea { width: 100%; margin-top: 8px; margin-bottom: 12px; padding: 10px; border-radius: 8px; border: 1px solid #475569; background: #0b1220; color: #e2e8f0; box-sizing: border-box; }
+      button { cursor: pointer; background: #2563eb; border: none; }
+      button.secondary { background: #334155; }
+      .muted { color: #94a3b8; font-size: 14px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      pre, textarea { white-space: pre-wrap; font-size: 13px; }
+      .status { padding: 10px 12px; background: #0b1220; border-radius: 8px; border: 1px solid #334155; margin-bottom: 12px; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>PPT Auto Presenter</h1>
+      <p class="muted">Windows-first MVP for slide-aware auto presentation using model URL + key, PowerPoint control, and local/ElevenLabs speech providers.</p>
+
+      <div class="grid">
+        <div class="card">
+          <h2>Model Settings</h2>
+          <label>Base URL</label>
+          <input id="baseUrl" placeholder="http://host:port/v1" />
+          <label>API Key</label>
+          <input id="apiKey" placeholder="sk-..." />
+          <label>Model</label>
+          <select id="modelSelect">
+            <option value="">Fetch from /v1/models</option>
+          </select>
+          <div class="row">
+            <button id="discoverBtn">Discover Models</button>
+            <button id="saveBtn" class="secondary">Save Settings</button>
+          </div>
+          <div id="modelStatus" class="status muted">Idle</div>
+        </div>
+
+        <div class="card">
+          <h2>Voice / TTS</h2>
+          <label>Provider</label>
+          <select id="ttsProvider">
+            <option value="local">Local TTS</option>
+            <option value="elevenlabs">ElevenLabs</option>
+          </select>
+          <label>Local Voice ID / Profile</label>
+          <input id="voicePath" placeholder="optional local voice id" />
+          <label>ElevenLabs API Key</label>
+          <input id="elevenApiKey" placeholder="xi-..." />
+          <label>ElevenLabs Voice ID</label>
+          <input id="elevenVoiceId" placeholder="voice_id" />
+          <label>ElevenLabs Model</label>
+          <input id="elevenModelId" value="eleven_multilingual_v2" />
+          <label>Clone Voice Name</label>
+          <input id="cloneVoiceName" placeholder="My Presentation Voice" />
+          <label>Clone Sample Paths (one per line)</label>
+          <textarea id="cloneSamplePaths" rows="4" placeholder="C:\\voices\\sample1.mp3&#10;C:\\voices\\sample2.mp3"></textarea>
+          <div class="row">
+            <button id="loadVoicesBtn" class="secondary">Load Local Voices</button>
+            <button id="loadElevenVoicesBtn" class="secondary">Load Eleven Voices</button>
+          </div>
+          <div class="row">
+            <button id="createCloneBtn">Create Eleven Clone</button>
+            <button id="testVoiceBtn" class="secondary">Test Active Provider</button>
+          </div>
+          <pre id="voicesBox">[]</pre>
+        </div>
+
+        <div class="card">
+          <h2>PPT Source</h2>
+          <label>PPT/PPTX File</label>
+          <input id="pptPath" placeholder="C:\\slides\\demo.pptx" />
+          <div class="row">
+            <button id="loadPptBtn">Load PPT</button>
+            <button id="openPptBtn" class="secondary">Open in PowerPoint</button>
+          </div>
+          <button id="startShowBtn">Start Slide Show</button>
+          <div id="pptStatus" class="status muted">No deck loaded</div>
+        </div>
+
+        <div class="card">
+          <h2>Presentation Control</h2>
+          <div id="presentationState" class="status mono">state=idle current_slide=-</div>
+          <div class="row">
+            <button id="generateCurrentBtn">Generate Current Slide</button>
+            <button id="speakCurrentBtn" class="secondary">Speak Current Text</button>
+          </div>
+          <div class="row">
+            <button id="autoStartBtn">Auto Present</button>
+            <button id="autoStopBtn" class="secondary">Stop Auto</button>
+          </div>
+          <div class="row">
+            <button id="nextBtn" class="secondary">Next Slide</button>
+            <button id="refreshStateBtn" class="secondary">Refresh State</button>
+          </div>
+          <label>Generated Narration</label>
+          <textarea id="narrationBox" rows="10" placeholder="Narration output will appear here..."></textarea>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h2>Slides</h2>
+        <pre id="slidesBox">[]</pre>
+      </div>
+    </div>
+
+    <script>
+      const api = 'http://127.0.0.1:18765/api';
+      let loadedSlides = [];
+      let stateTimer = null;
+
+      const $ = (id) => document.getElementById(id);
+      const setText = (id, text) => { $(id).textContent = text; };
+
+      async function post(path, body) {
+        const res = await fetch(api + path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body || {}),
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(txt || ('HTTP ' + res.status));
+        }
+        return res.json();
+      }
+
+      async function get(path) {
+        const res = await fetch(api + path);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }
+
+      async function init() {
+        try {
+          const config = await get('/config');
+          $('baseUrl').value = config.base_url || '';
+          $('apiKey').value = config.api_key || '';
+          $('voicePath').value = config.voice_profile || '';
+          $('ttsProvider').value = config.tts_provider || 'local';
+          $('elevenApiKey').value = config.elevenlabs_api_key || '';
+          $('elevenVoiceId').value = config.elevenlabs_voice_id || '';
+          $('elevenModelId').value = config.elevenlabs_model_id || 'eleven_multilingual_v2';
+          if (config.model) {
+            const opt = document.createElement('option');
+            opt.value = config.model;
+            opt.textContent = config.model;
+            $('modelSelect').appendChild(opt);
+            $('modelSelect').value = config.model;
+          }
+          await refreshState();
+          stateTimer = setInterval(refreshState, 1500);
+        } catch (err) {
+          setText('modelStatus', 'Backend not ready: ' + err.message);
+        }
+      }
+
+      async function refreshState() {
+        try {
+          const state = await get('/presentation/state');
+          setText('presentationState', `state=${state.status} current_slide=${state.current_slide ?? '-'} deck=${state.deck_path ?? '-'} auto=${state.auto_mode} speaking=${state.speaking} error=${state.error || '-'}`);
+          if (state.last_narration) $('narrationBox').value = state.last_narration;
+        } catch (err) {
+          setText('presentationState', 'state=backend_error ' + err.message);
+        }
+      }
+
+      $('discoverBtn').onclick = async () => {
+        try {
+          setText('modelStatus', 'Discovering models...');
+          const data = await post('/models/discover', {
+            base_url: $('baseUrl').value,
+            api_key: $('apiKey').value,
+          });
+          $('modelSelect').innerHTML = '';
+          data.models.forEach((m) => {
+            const opt = document.createElement('option');
+            opt.value = m.id;
+            opt.textContent = m.id;
+            $('modelSelect').appendChild(opt);
+          });
+          setText('modelStatus', `Loaded ${data.models.length} model(s)`);
+        } catch (err) {
+          setText('modelStatus', 'Discovery failed: ' + err.message);
+        }
+      };
+
+      $('saveBtn').onclick = async () => {
+        try {
+          await post('/config', {
+            base_url: $('baseUrl').value,
+            api_key: $('apiKey').value,
+            model: $('modelSelect').value,
+            voice_profile: $('voicePath').value,
+            tts_provider: $('ttsProvider').value,
+            elevenlabs_api_key: $('elevenApiKey').value,
+            elevenlabs_voice_id: $('elevenVoiceId').value,
+            elevenlabs_model_id: $('elevenModelId').value,
+          });
+          setText('modelStatus', 'Settings saved');
+        } catch (err) {
+          setText('modelStatus', 'Save failed: ' + err.message);
+        }
+      };
+
+      $('loadVoicesBtn').onclick = async () => {
+        try {
+          const data = await get('/tts/voices');
+          $('voicesBox').textContent = JSON.stringify(data.voices, null, 2);
+        } catch (err) {
+          $('voicesBox').textContent = 'Voice load failed: ' + err.message;
+        }
+      };
+
+      $('loadElevenVoicesBtn').onclick = async () => {
+        try {
+          await $('saveBtn').onclick();
+          const data = await get('/tts/elevenlabs/voices');
+          $('voicesBox').textContent = JSON.stringify(data.voices, null, 2);
+        } catch (err) {
+          $('voicesBox').textContent = 'ElevenLabs voice load failed: ' + err.message;
+        }
+      };
+
+      $('createCloneBtn').onclick = async () => {
+        try {
+          await $('saveBtn').onclick();
+          const sample_paths = $('cloneSamplePaths').value.split('\n').map(s => s.trim()).filter(Boolean);
+          const data = await post('/tts/elevenlabs/create-voice', {
+            name: $('cloneVoiceName').value,
+            description: 'Created by PPT Auto Presenter',
+            sample_paths,
+            api_key: $('elevenApiKey').value,
+          });
+          if (data.voice_id) $('elevenVoiceId').value = data.voice_id;
+          $('voicesBox').textContent = JSON.stringify(data, null, 2);
+        } catch (err) {
+          $('voicesBox').textContent = 'Create clone failed: ' + err.message;
+        }
+      };
+
+      $('testVoiceBtn').onclick = async () => {
+        try {
+          const text = $('narrationBox').value || '这是一段测试播报。';
+          if ($('ttsProvider').value === 'elevenlabs') {
+            await post('/tts/elevenlabs/speak', {
+              text,
+              api_key: $('elevenApiKey').value,
+              voice_id: $('elevenVoiceId').value,
+              model_id: $('elevenModelId').value,
+            });
+          } else {
+            await post('/tts/speak', {
+              text,
+              voice_id: $('voicePath').value || '',
+              rate: 185,
+              volume: 1.0,
+            });
+          }
+        } catch (err) {
+          $('narrationBox').value = 'Speak failed: ' + err.message;
+        }
+      };
+
+      $('loadPptBtn').onclick = async () => {
+        try {
+          const data = await post('/ppt/load', { path: $('pptPath').value });
+          loadedSlides = data.slides || [];
+          $('slidesBox').textContent = JSON.stringify(loadedSlides, null, 2);
+          setText('pptStatus', `Loaded ${loadedSlides.length} slide(s)`);
+        } catch (err) {
+          setText('pptStatus', 'Load failed: ' + err.message);
+        }
+      };
+
+      $('openPptBtn').onclick = async () => {
+        try {
+          const state = await post('/ppt/open', { path: $('pptPath').value });
+          setText('pptStatus', `PowerPoint ready: ${state.deck_path}`);
+          await refreshState();
+        } catch (err) {
+          setText('pptStatus', 'Open failed: ' + err.message);
+        }
+      };
+
+      $('startShowBtn').onclick = async () => {
+        try {
+          await post('/presentation/start');
+          await refreshState();
+          setText('pptStatus', 'Slide show started');
+        } catch (err) {
+          setText('pptStatus', 'Start failed: ' + err.message);
+        }
+      };
+
+      $('nextBtn').onclick = async () => {
+        try {
+          await post('/presentation/next');
+          await refreshState();
+        } catch (err) {
+          setText('pptStatus', 'Next slide failed: ' + err.message);
+        }
+      };
+
+      $('refreshStateBtn').onclick = refreshState;
+
+      $('generateCurrentBtn').onclick = async () => {
+        try {
+          const state = await get('/presentation/state');
+          const slideIndex = state.current_slide || 1;
+          const slide = loadedSlides.find((s) => s.index === slideIndex) || loadedSlides[0];
+          if (!slide) throw new Error('No slide loaded');
+          const data = await post('/narration/generate', {
+            slide_index: slide.index,
+            text: slide.text || '',
+            notes: slide.notes || '',
+            style: 'professional',
+            duration_hint_sec: 45,
+          });
+          $('narrationBox').value = data.text || '';
+          await refreshState();
+        } catch (err) {
+          $('narrationBox').value = 'Generate failed: ' + err.message;
+        }
+      };
+
+      $('speakCurrentBtn').onclick = async () => {
+        try {
+          const text = $('narrationBox').value || '没有可播报的内容。';
+          if ($('ttsProvider').value === 'elevenlabs') {
+            await post('/tts/elevenlabs/speak', {
+              text,
+              api_key: $('elevenApiKey').value,
+              voice_id: $('elevenVoiceId').value,
+              model_id: $('elevenModelId').value,
+            });
+          } else {
+            await post('/tts/speak', {
+              text,
+              voice_id: $('voicePath').value || '',
+              rate: 185,
+              volume: 1.0,
+            });
+          }
+        } catch (err) {
+          $('narrationBox').value = 'Speak failed: ' + err.message;
+        }
+      };
+
+      $('autoStartBtn').onclick = async () => {
+        try {
+          await $('saveBtn').onclick();
+          await post('/presentation/auto-start');
+          await refreshState();
+        } catch (err) {
+          $('narrationBox').value = 'Auto-present failed: ' + err.message;
+        }
+      };
+
+      $('autoStopBtn').onclick = async () => {
+        try {
+          await post('/presentation/auto-stop');
+          await refreshState();
+        } catch (err) {
+          $('narrationBox').value = 'Stop failed: ' + err.message;
+        }
+      };
+
+      init();
+    </script>
+  </body>
+</html>

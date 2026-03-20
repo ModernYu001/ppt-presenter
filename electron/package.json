@@ -1,0 +1,55 @@
+{
+  "name": "ppt-auto-presenter-electron",
+  "version": "0.2.0",
+  "private": true,
+  "main": "src/main/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "electron .",
+    "prep-python": "node scripts/prep_python_runtime.js",
+    "prep-backend-exe": "node scripts/prep_backend_exe.js",
+    "dist": "npm run prep-python && npm run prep-backend-exe && npm run build && electron-builder",
+    "dist:mac": "npm run prep-python && npm run build && electron-builder --mac dmg"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "electron": "^35.1.4",
+    "electron-builder": "^24.13.3",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "vite": "^6.2.0"
+  },
+  "build": {
+    "appId": "org.modernyu.pptautopresenter",
+    "productName": "PPT Auto Presenter",
+    "files": [
+      "dist/**/*",
+      "src/main/**/*",
+      "../python/**/*",
+      "python-runtime/**/*",
+      "backend-exe/**/*"
+    ],
+    "asar": true,
+    "directories": {
+      "output": "dist-app"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    }
+  }
+}
