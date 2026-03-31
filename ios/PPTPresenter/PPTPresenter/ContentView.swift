@@ -152,9 +152,7 @@ struct UploadView: View {
             .navigationTitle("PPT Presenter")
             .fileImporter(
                 isPresented: $isImporting,
-                allowedContentTypes: [
-                    UTType(filenameExtension: "pptx") ?? .data
-                ],
+                allowedContentTypes: [UTType.presentation, .data],
                 allowsMultipleSelection: false
             ) { result in
                 handleImport(result)
