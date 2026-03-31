@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var settings: AppSettings
@@ -151,7 +152,9 @@ struct UploadView: View {
             .navigationTitle("PPT Presenter")
             .fileImporter(
                 isPresented: $isImporting,
-                allowedContentTypes: [.init(filenameExtension: "pptx")!],
+                allowedContentTypes: [
+                    UTType(filenameExtension: "pptx") ?? .data
+                ],
                 allowsMultipleSelection: false
             ) { result in
                 handleImport(result)
