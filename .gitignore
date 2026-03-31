@@ -9,3 +9,4 @@ dist-app/
 .python-version
 .env
 .env.*
+test_deck.pptx
